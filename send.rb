@@ -1,14 +1,14 @@
 # Sends one email, reads its status back, then schedules and cancels another.
 #
-#   ruby send.rb
+#   bundle exec ruby send.rb
 #
 # Everything it needs comes from the environment (or a .env file next to this
 # script) - see .env.example.
 
-require_relative "lib/mailtea"
+require "mailtea"
 
-# Ruby has no built-in dotenv, and this example has no gems, so read the file
-# directly. Anything already exported wins, which is what you want in CI.
+# Ruby has no built-in dotenv, and this example adds no gem for one, so read the
+# file directly. Anything already exported wins, which is what you want in CI.
 def load_dotenv(path = File.join(__dir__, ".env"))
   return unless File.exist?(path)
 
@@ -42,23 +42,23 @@ SUBJECT = ENV.fetch("MAILTEA_SUBJECT", "Hello from Ruby")
 mailtea = Mailtea::Client.new
 
 begin
-  sent = mailtea.send_email(
+  sent = mailtea.emails.send(
     from: FROM,
     to: TO,
     subject: SUBJECT,
-    html: "<p>Sent with <strong>Ruby</strong> and the Mailtea API.</p>",
-    text: "Sent with Ruby and the Mailtea API.",
+    html: "<p>Sent with <strong>Ruby</strong> and the Mailtea SDK.</p>",
+    text: "Sent with Ruby and the Mailtea SDK.",
     tags: [{ name: "example", value: "ruby" }]
   )
   puts "Sent: #{sent["id"]}"
 
   # Delivery is asynchronous, so right after a send this is usually "queued".
   # Poll it, or subscribe to webhooks if you need to react to delivery.
-  status = mailtea.get_email(sent["id"])
-  puts "Status: #{status["last_event"]}"
+  email = mailtea.emails.get(sent["id"])
+  puts "Status: #{email["status"]}"
 
   # A scheduled send stays cancellable until it goes out.
-  scheduled = mailtea.send_email(
+  scheduled = mailtea.emails.send(
     from: FROM,
     to: TO,
     subject: "#{SUBJECT} (scheduled)",
@@ -67,11 +67,13 @@ begin
   )
   puts "Scheduled: #{scheduled["id"]}"
 
-  mailtea.cancel_email(scheduled["id"])
+  mailtea.emails.cancel(scheduled["id"])
   puts "Cancelled: #{scheduled["id"]}"
 rescue Mailtea::Error => e
   # This is the branch worth copying: the API's own message tells you whether
   # the domain is unverified, the plan is out of quota, or the body was wrong.
-  warn e.message
+  # A dropped connection raises the same class with status 0, so one rescue
+  # covers the whole send path.
+  warn "#{e.message} (status #{e.status}, request #{e.request_id})"
   exit 1
 end

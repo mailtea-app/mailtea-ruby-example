@@ -109,6 +109,9 @@ class MockMailtea
     socket.print("HTTP/1.1 #{status}\r\n")
     socket.print("Content-Type: application/json\r\n")
     socket.print("Content-Length: #{body.bytesize}\r\n")
+    # The real API stamps every response with one, and Mailtea::Error carries it
+    # through for support tickets.
+    socket.print("x-request-id: req_mock_1\r\n")
     socket.print("Connection: close\r\n\r\n")
     socket.print(body)
   end

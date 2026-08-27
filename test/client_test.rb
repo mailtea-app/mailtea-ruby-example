@@ -1,22 +1,24 @@
+# frozen_string_literal: true
+
 require "minitest/autorun"
 require "open3"
 require "rbconfig"
 
+require "mailtea"
 require_relative "mock_mailtea"
-require_relative "../lib/mailtea"
 
 class ClientTest < Minitest::Test
   def setup
     @mock = MockMailtea.new
-    @client = Mailtea::Client.new("mt_pat_test", base_url: @mock.url)
+    @mailtea = Mailtea::Client.new("mt_pat_test", base_url: @mock.url)
   end
 
   def teardown
     @mock.close
   end
 
-  def test_send_email_posts_to_the_configured_base_url
-    result = @client.send_email(
+  def test_send_posts_to_the_configured_base_url
+    result = @mailtea.emails.send(
       from: "Acme <hello@acme.com>",
       to: "reader@acme.com",
       subject: "Hello from Ruby",
@@ -35,8 +37,8 @@ class ClientTest < Minitest::Test
     assert_equal MockMailtea::EMAIL_ID, result["id"]
   end
 
-  def test_send_email_passes_optional_fields_through
-    @client.send_email(
+  def test_send_passes_optional_fields_through
+    @mailtea.emails.send(
       from: "Acme <hello@acme.com>",
       to: ["one@acme.com", "two@acme.com"],
       subject: "Hello",
@@ -54,17 +56,19 @@ class ClientTest < Minitest::Test
     assert_equal "2026-09-01T09:00:00Z", body["scheduled_at"]
   end
 
-  def test_get_email_reads_the_delivery_status
-    email = @client.get_email("txemail_abc123")
+  def test_get_reads_the_delivery_status
+    email = @mailtea.emails.get("txemail_abc123")
 
     assert_equal "GET", @mock.last.method
     assert_equal "/v1/emails/txemail_abc123", @mock.last.path
     assert_equal "Bearer mt_pat_test", @mock.last.authorization
+    # The SDK aliases the wire's last_event to a friendlier `status`.
     assert_equal "delivered", email["last_event"]
+    assert_equal "delivered", email["status"]
   end
 
-  def test_cancel_email_hits_the_cancel_route
-    @client.cancel_email("txemail_abc123")
+  def test_cancel_hits_the_cancel_route
+    @mailtea.emails.cancel("txemail_abc123")
 
     assert_equal "POST", @mock.last.method
     assert_equal "/v1/emails/txemail_abc123/cancel", @mock.last.path
@@ -76,11 +80,11 @@ class ClientTest < Minitest::Test
     # (a self-hosted Mailtea behind a proxy) is preserved.
     wrong = Mailtea::Client.new("mt_pat_test", base_url: "#{@mock.url}/not-the-api")
 
-    error = assert_raises(Mailtea::Error) { wrong.get_email("txemail_abc123") }
+    error = assert_raises(Mailtea::Error) { wrong.emails.get("txemail_abc123") }
 
     assert_equal 404, error.status
-    assert_equal "Not Found", error.body["error"]
-    assert_equal "Mailtea API error 404: Not Found", error.message
+    assert_equal "Not Found", error.message
+    assert_equal "req_mock_1", error.request_id
     assert_equal "/not-the-api/v1/emails/txemail_abc123", @mock.last.path
   end
 
@@ -95,16 +99,24 @@ class ClientTest < Minitest::Test
     client = Mailtea::Client.new("mt_pat_test", base_url: dead_url)
 
     error = assert_raises(Mailtea::Error) do
-      client.send_email(from: "Acme <hello@acme.com>", to: "reader@acme.com", subject: "Hello")
+      client.emails.send(from: "Acme <hello@acme.com>", to: "reader@acme.com", subject: "Hello")
     end
 
-    assert_nil error.status
-    assert_includes error.message, "Could not reach Mailtea at #{dead_url}"
+    assert_equal 0, error.status
+    assert_includes error.message, "Could not reach Mailtea at"
   end
 
+  # MAILTEA_API_KEY has to be cleared for the duration. `Client.new(nil)` falls
+  # back to the environment by design, so without this the assertion reads the
+  # developer's shell instead of the code - and fails on the machine of anyone
+  # who exported a key, which is exactly what setting this example up does.
   def test_the_client_refuses_to_start_without_an_api_key
-    assert_raises(ArgumentError) { Mailtea::Client.new(nil, base_url: @mock.url) }
-    assert_raises(ArgumentError) { Mailtea::Client.new("", base_url: @mock.url) }
+    previous = ENV.delete("MAILTEA_API_KEY")
+
+    assert_raises(Mailtea::Error) { Mailtea::Client.new(nil, base_url: @mock.url) }
+    assert_raises(Mailtea::Error) { Mailtea::Client.new("", base_url: @mock.url) }
+  ensure
+    ENV["MAILTEA_API_KEY"] = previous
   end
 
   # send.rb is the file people copy, so run it end to end and check it prints
